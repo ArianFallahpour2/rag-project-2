@@ -1,0 +1,7 @@
+streamlit
+faiss-cpu
+numpy
+requests
+groq
+google-genai
+huggingface-hub
