@@ -1,6 +1,7 @@
 streamlit
 faiss-cpu
 numpy
+gradio
 requests
 groq
 google-genai
