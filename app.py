@@ -1,12 +1,5 @@
 import os
 import zipfile
-import json
-import pandas as pd
-from datetime import datetime
-import chainlit as cl
-from huggingface_hub import HfApi
-import index
-
 # ------------------------------------------------------------
 # Extract data files from zip (runs once on application boot)
 # ------------------------------------------------------------
@@ -24,6 +17,13 @@ if not os.path.exists("child_index.faiss"):
 # ------------------------------------------------------------
 # Hugging Face Dataset Feedback Configuration
 # ------------------------------------------------------------
+import json
+import pandas as pd
+from datetime import datetime
+import chainlit as cl
+from huggingface_hub import HfApi
+import index
+
 HF_TOKEN = os.getenv("HF_TOKEN")
 HF_DATASET_REPO = "arn-flp/RAG-project-data"
 FEEDBACK_FILE = "feedback.csv"
