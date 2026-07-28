@@ -19,9 +19,6 @@ if not os.path.exists("child_index.faiss"):
 from datetime import datetime
 import gradio as gr
 
-# Try loading secrets from Streamlit if deployed there, else standard env
-import streamlit as st
-
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 from huggingface_hub import CommitOperationAdd, HfApi
