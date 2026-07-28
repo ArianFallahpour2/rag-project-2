@@ -1,177 +1,172 @@
 import os
 import zipfile
+from datetime import datetime
+import pandas as pd
+import streamlit as st
+from huggingface_hub import HfApi
 
 # ------------------------------------------------------------
-# Extract data files from the zip (only once, before anything else)
+# 1. Page Configuration & RTL Custom CSS
+# ------------------------------------------------------------
+st.set_page_config(page_title="Farsi RAG", page_icon="💬", layout="centered")
+
+st.markdown(
+    """
+    <style>
+    /* Global Right-to-Left alignment for Farsi UI */
+    html, body, [data-testid="stAppViewContainer"] {
+        direction: rtl;
+        text-align: right;
+    }
+    .stChatMessage {
+        direction: rtl;
+        text-align: right;
+    }
+    .stTextInput input, .stChatInput textarea {
+        direction: rtl;
+        text-align: right;
+    }
+    div[data-testid="column"] {
+        text-align: right;
+    }
+    </style>
+    """,
+    unsafe_allow_code_html=True,
+)
+
+# ------------------------------------------------------------
+# 2. Extract data files from zip (only once)
 # ------------------------------------------------------------
 ZIP_FILENAME = "data.zip"
 
 if not os.path.exists("child_index.faiss"):
-  if os.path.exists(ZIP_FILENAME):
-    print(f"Extracting {ZIP_FILENAME}...")
-    with zipfile.ZipFile(ZIP_FILENAME, "r") as zf:
-      zf.extractall(".")
-    print("Extraction complete.")
-  else:
-    print(f"WARNING: {ZIP_FILENAME} not found! The app may not work.")
+    if os.path.exists(ZIP_FILENAME):
+        st.write(f"Extracting {ZIP_FILENAME}...")
+        with zipfile.ZipFile(ZIP_FILENAME, "r") as zf:
+            zf.extractall(".")
+        st.write("Extraction complete.")
+    else:
+        st.warning(f"WARNING: {ZIP_FILENAME} not found! The app may not work.")
+
+# Import indexing logic after extraction
+import index  # Ensure index.py imports cleanly
+
 # ------------------------------------------------------------
-
-from datetime import datetime
-import gradio as gr
-
-# Try loading secrets from Streamlit if deployed there, else standard env
-import streamlit as st
-
-HF_TOKEN = st.secrets.get("HF_TOKEN")
-
-from huggingface_hub import CommitOperationAdd, HfApi
-import index
-import pandas as pd
-
-# ---- RTL CSS (applied via launch()) ----
-css = """
-  html, body, .gradio-container {
-    direction: rtl;
-  }
-  .gradio-container .chatbot {
-    direction: rtl;
-  }
-  .gradio-container .textbox textarea {
-    direction: rtl;
-    text-align: right;
-  }
-  .gradio-container .message {
-    direction: rtl;
-    unicode-bidi: isolate;
-    text-align: right;
-  }
-"""
-
-feedback_file = "feedback.csv"
+# 3. Environment & Secrets Setup
+# ------------------------------------------------------------
+HF_TOKEN = st.secrets.get("HF_TOKEN") if "HF_TOKEN" in st.secrets else os.getenv("HF_TOKEN")
 HF_DATASET_REPO = "arn-flp/RAG-project-data"
+FEEDBACK_FILE = "feedback.csv"
 
 
 def push_feedback_file():
-  """Upload the local CSV to the dataset repo."""
-  if not HF_TOKEN:
-    print("WARNING: HF_TOKEN is not set. Feedback will not be uploaded.")
-    return
+    """Upload the local feedback CSV to the Hugging Face dataset repo."""
+    if not HF_TOKEN:
+        print("WARNING: HF_TOKEN is not set. Feedback will not be uploaded.")
+        return
 
-  api = HfApi()
-  api.upload_file(
-      path_or_fileobj="feedback.csv",
-      path_in_repo="feedback.csv",
-      repo_id=HF_DATASET_REPO,
-      repo_type="dataset",
-      token=HF_TOKEN,
-      commit_message="Update feedback",
-  )
+    try:
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=FEEDBACK_FILE,
+            path_in_repo="feedback.csv",
+            repo_id=HF_DATASET_REPO,
+            repo_type="dataset",
+            token=HF_TOKEN,
+            commit_message="Update feedback via Streamlit",
+        )
+    except Exception as e:
+        print(f"Error uploading feedback to HF: {e}")
 
 
 def save_feedback(query, answer, rating):
-  df_new = pd.DataFrame([{
-      "timestamp": datetime.now().isoformat(),
-      "query": query,
-      "answer": answer,
-      "rating": rating,
-  }])
-  if not os.path.exists(feedback_file):
-    df_new.to_csv(feedback_file, index=False)
-  else:
-    df_new.to_csv(feedback_file, mode="a", header=False, index=False)
-  print("Saved feedback to", os.path.abspath(feedback_file))
-  print(f"Rating: {rating} | Q: {query} | A: {answer}")
-  push_feedback_file()
+    df_new = pd.DataFrame([{
+        "timestamp": datetime.now().isoformat(),
+        "query": query,
+        "answer": answer,
+        "rating": rating,
+    }])
+    if not os.path.exists(FEEDBACK_FILE):
+        df_new.to_csv(FEEDBACK_FILE, index=False)
+    else:
+        df_new.to_csv(FEEDBACK_FILE, mode="a", header=False, index=False)
+    
+    push_feedback_file()
 
 
-# ---- Build the Gradio interface ----
-with gr.Blocks(title="Farsi RAG") as demo:
-  chat_bot = gr.Chatbot()
-  msg = gr.Textbox(placeholder="لطفا پرسش خود را وارد کنید")
-  clear = gr.Button("پاک کردن گفتگو")
+# ------------------------------------------------------------
+# 4. Session State Initialization
+# ------------------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-  # Feedback row
-  with gr.Row(visible=False) as feedback_row:
-    like_btn = gr.Button("👍")
-    dislike_btn = gr.Button("👎")
-    feedback_msg = gr.Markdown("")
+if "last_feedback" not in st.session_state:
+    st.session_state.last_feedback = None  # Stores feedback state for the latest response
 
-  def get_message_text(msg):
-    content = msg.get("content", "")
-    if isinstance(content, str):
-      return content
-    if isinstance(content, list) and len(content) > 0:
-      return content[0].get("text", "")
-    return str(content)
+# ------------------------------------------------------------
+# 5. UI Structure
+# ------------------------------------------------------------
+st.title("سامانه پرسش و پاسخ هوشمند (Farsi RAG)")
 
-  def respond(query, chat_history):
-    answer = index.rag_chat_simple(query)
-    chat_history.append({"role": "user", "content": query})
-    chat_history.append({"role": "assistant", "content": answer})
-    return (
-        "",
-        chat_history,
-        gr.update(visible=True),  # feedback_row
-        gr.update(interactive=True),  # like_btn
-        gr.update(interactive=True),  # dislike_btn
-        "",  # feedback_msg
-    )
+# Sidebar control to clear chat
+with st.sidebar:
+    if st.button("پاک کردن گفتگو", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.last_feedback = None
+        st.rerun()
 
-  def handle_like(chat_history):
-    if chat_history:
-      user_msgs = [m for m in chat_history if m["role"] == "user"]
-      assistant_msgs = [m for m in chat_history if m["role"] == "assistant"]
-      if user_msgs and assistant_msgs:
-        q = get_message_text(user_msgs[-1])
-        a = get_message_text(assistant_msgs[-1])
-        save_feedback(q, a, "like")
-        return (
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            "👍 متشکریم",
-        )
-    return (gr.update(interactive=False), gr.update(interactive=False), "")
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-  def handle_dislike(chat_history):
-    if chat_history:
-      user_msgs = [m for m in chat_history if m["role"] == "user"]
-      assistant_msgs = [m for m in chat_history if m["role"] == "assistant"]
-      if user_msgs and assistant_msgs:
-        q = get_message_text(user_msgs[-1])
-        a = get_message_text(assistant_msgs[-1])
-        save_feedback(q, a, "dislike")
-        return (
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            "👎 متشکریم، بررسی می‌کنیم",
-        )
-    return (gr.update(interactive=False), gr.update(interactive=False), "")
+# Chat input
+if user_query := st.chat_input("لطفا پرسش خود را وارد کنید"):
+    # Append user message
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    with st.chat_message("user"):
+        st.markdown(user_query)
 
-  # Wire events
-  msg.submit(
-      respond,
-      [msg, chat_bot],
-      [msg, chat_bot, feedback_row, like_btn, dislike_btn, feedback_msg],
-  )
-  like_btn.click(
-      handle_like, chat_bot, [like_btn, dislike_btn, feedback_msg]
-  )
-  dislike_btn.click(
-      handle_dislike, chat_bot, [like_btn, dislike_btn, feedback_msg]
-  )
-  clear.click(
-      lambda: (
-          [],  # chat_bot
-          gr.update(visible=False),  # feedback_row
-          gr.update(interactive=True),  # like_btn
-          gr.update(interactive=True),  # dislike_btn
-          "",  # feedback_msg
-      ),
-      [],
-      [chat_bot, feedback_row, like_btn, dislike_btn, feedback_msg],
-  )
+    # Generate bot response
+    with st.chat_message("assistant"):
+        with st.spinner("در حال جستجو و پاسخ‌دهی..."):
+            answer = index.rag_chat_simple(user_query)
+            st.markdown(answer)
 
-# ---- Launch ----
-if __name__ == "__main__":
-  port = int(os.getenv("PORT", 7860))
-  demo.launch(server_name="0.0.0.0", server_port=port, css=css)
+    # Append assistant response & reset feedback state
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.session_state.last_feedback = None
+    st.rerun()
+
+# ------------------------------------------------------------
+# 6. Feedback Mechanism (Visible if at least one exchange exists)
+# ------------------------------------------------------------
+if st.session_state.messages:
+    # Get last pair of user question and assistant answer
+    user_msgs = [m for m in st.session_state.messages if m["role"] == "user"]
+    assistant_msgs = [m for m in st.session_state.messages if m["role"] == "assistant"]
+
+    if user_msgs and assistant_msgs:
+        last_q = user_msgs[-1]["content"]
+        last_a = assistant_msgs[-1]["content"]
+
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 1, 4])
+
+        with col1:
+            if st.button("👍", key="like_btn", disabled=(st.session_state.last_feedback is not None)):
+                save_feedback(last_q, last_a, "like")
+                st.session_state.last_feedback = "like"
+                st.rerun()
+
+        with col2:
+            if st.button("👎", key="dislike_btn", disabled=(st.session_state.last_feedback is not None)):
+                save_feedback(last_q, last_a, "dislike")
+                st.session_state.last_feedback = "dislike"
+                st.rerun()
+
+        with col3:
+            if st.session_state.last_feedback == "like":
+                st.success("👍 متشکریم")
+            elif st.session_state.last_feedback == "dislike":
+                st.info("👎 متشکریم، بررسی می‌کنیم")
