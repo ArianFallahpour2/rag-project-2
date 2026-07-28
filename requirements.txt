@@ -1,4 +1,5 @@
 streamlit
+chainlit
 faiss-cpu
 numpy
 gradio
