@@ -8,7 +8,7 @@ index = faiss.read_index("child_index.faiss")
 
 # Get Hugging Face API key from Streamlit secrets
 HF_TOKEN = st.secrets.get("HF_TOKEN")
-API_URL = "https://api-inference.huggingface.co/models/BAAI/bge-m3"
+API_URL = "https://router.huggingface.co/v1/models/BAAI/bge-m3"
 
 
 def get_query_embedding_api(query_text):
