@@ -1,59 +1,76 @@
+import os
+import time
 import faiss
 import numpy as np
 import requests
-import streamlit as st
 
-# Load the FAISS index (Extracted from data.zip)
-index = faiss.read_index("child_index.faiss")
-
-# Get Hugging Face API key from Streamlit secrets
-HF_TOKEN = st.secrets.get("HF_TOKEN")
-API_URL = "https://api-inference.huggingface.co/models/BAAI/bge-m3"
+# Retrieve HF_TOKEN from ParsPack Environment Variables
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 
-def get_query_embedding_api(query_text):
-  """Sends the query to Hugging Face Serverless API and gets back a 1024-dim vector."""
-  headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-  payload = {"inputs": [query_text], "options": {"wait_for_model": True}}
+def get_query_embedding_api(input_query):
+    API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-m3/pipeline/feature-extraction"
+    
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {"inputs": input_query}
 
-  response = requests.post(API_URL, headers=headers, json=payload)
+    for attempt in range(3):
+        try:
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=20)
+            
+            if response.status_code == 200:
+                return response.json()
+            
+            if response.status_code == 503:
+                print("Embedding model is loading... retrying in 10s.")
+                time.sleep(10)
+                continue
+                
+            print(f"HF API Error [{response.status_code}]: {response.text}")
+            return None
 
-  if response.status_code != 200:
-    raise RuntimeError(
-        f"HF Embedding API failed [{response.status_code}]: {response.text}"
-    )
+        except requests.exceptions.RequestException as e:
+            print(f"Network error calling embedding API: {e}")
+            return None
 
-  # HF Feature Extraction API returns a list of embeddings
-  data = response.json()
-
-  # Extract embedding vector and cast to float32 for FAISS
-  embedding = np.array(data[0], dtype="float32")
-
-  # Normalize for cosine similarity / inner product matching
-  faiss.normalize_L2(embedding)
-
-  return embedding
+    return None
 
 
-def child_retriever(input_query, input_child_chunks):
-  """Retrieve child chunk texts directly for a given query.
+def child_retriever(input_query, input_child_chunks, faiss_index_path="child_index.faiss"):
+    """Retrieve child chunk texts directly for a given query."""
+    
+    # Load index dynamically to safely handle startup extraction
+    if not os.path.exists(faiss_index_path):
+        raise FileNotFoundError(f"FAISS index file not found at: {faiss_index_path}")
+        
+    index = faiss.read_index(faiss_index_path)
 
-  Steps:
-    1. Embed query via Hugging Face Serverless API (Zero local RAM used!).
-    2. Search FAISS index for top 5 matches.
-    3. Return matching chunk texts.
-  """
-  # Get 1024-dim query vector via API
-  embedded_query = get_query_embedding_api(input_query)
+    raw_embedding = get_query_embedding_api(input_query)
+    if raw_embedding is None:
+        return ["Error: Failed to fetch query embedding from Hugging Face API."]
 
-  # FAISS expects 2D array (shape: 1 x 1024)
-  if len(embedded_query.shape) == 1:
-    embedded_query = np.expand_dims(embedded_query, axis=0)
+    # Convert list to float32 NumPy array
+    embedded_query = np.array(raw_embedding, dtype=np.float32)
 
-  # Get top-5 child indices
-  distances, indices = index.search(embedded_query, 5)
-  top_child_indices = indices[0]
+    # Dimensionality check & reduction if sequence dim present
+    if embedded_query.ndim > 1:
+        embedded_query = np.mean(embedded_query, axis=tuple(range(embedded_query.ndim - 1)))
 
-  # Return actual texts from child chunks
-  retrieved_texts = [input_child_chunks[i]["text"] for i in top_child_indices]
-  return retrieved_texts
+    if embedded_query.ndim == 1:
+        embedded_query = np.expand_dims(embedded_query, axis=0)
+
+    # Query FAISS index
+    distances, indices = index.search(embedded_query, 5)
+    top_child_indices = indices[0]
+
+    retrieved_texts = [
+        input_child_chunks[i]["text"] 
+        for i in top_child_indices 
+        if 0 <= i < len(input_child_chunks)
+    ]
+    
+    return retrieved_texts

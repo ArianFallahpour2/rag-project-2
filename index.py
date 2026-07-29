@@ -9,8 +9,8 @@ import functions.retrieve as rtrve
 import functions.retrieve_childs as retrieve_childs
 
 # Fetch API keys from Streamlit Secrets
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Initialize Gemini Client
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None

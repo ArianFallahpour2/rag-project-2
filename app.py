@@ -19,12 +19,9 @@ if not os.path.exists("child_index.faiss"):
 from datetime import datetime
 import gradio as gr
 
-# Try loading secrets from Streamlit if deployed there, else standard env
-import streamlit as st
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-HF_TOKEN = st.secrets.get("HF_TOKEN")
-
-from huggingface_hub import CommitOperationAdd, HfApi
+from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 import index
 import pandas as pd
 
@@ -69,19 +66,33 @@ def push_feedback_file():
 
 
 def save_feedback(query, answer, rating):
-  df_new = pd.DataFrame([{
-      "timestamp": datetime.now().isoformat(),
-      "query": query,
-      "answer": answer,
-      "rating": rating,
-  }])
-  if not os.path.exists(feedback_file):
-    df_new.to_csv(feedback_file, index=False)
-  else:
-    df_new.to_csv(feedback_file, mode="a", header=False, index=False)
-  print("Saved feedback to", os.path.abspath(feedback_file))
-  print(f"Rating: {rating} | Q: {query} | A: {answer}")
-  push_feedback_file()
+    # Download existing feedback if it exists
+    try:
+        local_file = hf_hub_download(
+            repo_id=HF_DATASET_REPO,
+            repo_type="dataset",
+            filename=feedback_file,
+            token=HF_TOKEN,
+            force_download=True,
+        )
+        df = pd.read_csv(local_file)
+    except Exception:
+        # Dataset is empty or file doesn't exist yet
+        df = pd.DataFrame(columns=["timestamp", "query", "answer", "rating"])
+
+    # Add new row
+    df.loc[len(df)] = {
+        "timestamp": datetime.now().isoformat(),
+        "query": query,
+        "answer": answer,
+        "rating": rating,
+    }
+
+    # Save locally
+    df.to_csv("feedback.csv", index=False)
+
+    # Upload to HF
+    push_feedback_file()
 
 
 # ---- Build the Gradio interface ----
