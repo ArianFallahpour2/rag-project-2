@@ -5,7 +5,6 @@ from groq import Groq
 from google import genai
 
 # Import retrieval functions (ensure these use API embeddings, not local PyTorch)
-import functions.retrieve as rtrve
 import functions.retrieve_childs as retrieve_childs
 
 # Fetch API keys from Streamlit Secrets
@@ -41,18 +40,13 @@ def call_gemini(prompt):
     return response.text
 
 
-def rag_chat(query, history, selected_mode, show_sources):
+def rag_chat(query, history, show_sources):
     # 1. Load data files
     with open("child_chunks.json", "r", encoding="utf-8") as f:
         child_chunks = json.load(f)
-    with open("parent_list.json", "r", encoding="utf-8") as f:
-        parent_list = json.load(f)
 
     # 2. Retrieve context
-    if selected_mode == "بازیابی قطعات فرزند":
-        retrieved_texts = retrieve_childs.child_retriever(query, child_chunks)
-    else:
-        retrieved_texts = rtrve.retriever(query, child_chunks, parent_list)
+    retrieved_texts = retrieve_childs.child_retriever(query, child_chunks)
 
     if not retrieved_texts:
         return "اطلاعات کافی در مورد سوال پرسیده شده موجود نیست."
@@ -99,4 +93,4 @@ def rag_chat(query, history, selected_mode, show_sources):
 
 
 def rag_chat_simple(message):
-    return rag_chat(message, [], "بازیابی قطعات فرزند", False)
+    return rag_chat(message, [], False)
